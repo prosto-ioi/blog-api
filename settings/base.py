@@ -97,6 +97,8 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
+
+    'EXCEPTION_HANDLER': 'apps.common.utils.custom_exception_handler',
 }
 
 LOGGING = {
@@ -160,4 +162,14 @@ LOGGING = {
     },
 }
 
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL,  # переменная из conf.py
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        },
+        "TIMEOUT": 60,  # таймаут по умолчанию 60 секунд (необязательно)
+    }
+}
 
