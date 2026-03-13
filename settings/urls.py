@@ -3,9 +3,17 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from django_ratelimit.decorators import ratelimit
+from django.utils.decorators import method_decorator
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.blog.views import PostViewSet, CommentViewSet, CategoryViewSet, TagViewSet
 from apps.users.views import UserRegisterViewSet
+
+class RateLimitedTokenView(TokenObtainPairView):
+    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 router = DefaultRouter()
 router.register('posts', PostViewSet, basename='post')

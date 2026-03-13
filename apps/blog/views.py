@@ -6,6 +6,8 @@ from django.conf import settings
 from django.core.cache import cache
 from rest_framework import permissions, viewsets
 from rest_framework.response import Response
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 
 from .models import Category, Comment, Post, Tag
 from .serializers import (
@@ -30,6 +32,10 @@ class PostViewSet(viewsets.ModelViewSet):
     serializer_class = PostSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
     lookup_field = 'slug'
+
+    @method_decorator(ratelimit(key='user', rate='20/m', method='POST', block=True))
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
 
     def get_queryset(self):
         if self.request.user.is_authenticated:
