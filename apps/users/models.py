@@ -1,7 +1,14 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 from .managers import UserManager
+
+LANGUAGE_CHOICES = [
+    ('en', 'English'),
+    ('ru', 'Russian'),
+    ('kk', 'Kazakh'),
+]
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -12,6 +19,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    language = models.CharField(_('language'), max_length=5, choices=LANGUAGE_CHOICES, default='en')
+    timezone = models.CharField(_('timezone'), max_length=50, default='UTC')
 
     objects = UserManager()
 

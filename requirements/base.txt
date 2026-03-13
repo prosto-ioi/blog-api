@@ -9,3 +9,6 @@ Pillow==12.1.1
 drf-nested-routers==0.94.1
 django-ratelimit==4.1.0
 ruff==0.15.1
+drf-spectacular==0.28.0
+httpx==0.28.1
+pytz==2025.1

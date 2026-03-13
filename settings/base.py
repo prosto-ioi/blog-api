@@ -18,13 +18,23 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
 
     'rest_framework',
     'rest_framework_simplejwt',
+    'drf_spectacular'
 
     'apps.users',
     'apps.blog',
+    'apps.core',
 ]
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Blog API',
+    'DESCRIPTION': 'REST API for block with JWT, Redis, i18n',
+    'VERSION': '1.0.0', 
+    'SERVE_INCLUDE_SCHEMA': False,
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -34,7 +44,11 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'apps.common.middleware.RequestLogMiddleware',
+    'apps.core.middleware.LanguageAndTimezoneMiddleware',
+
 ]
+
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 ROOT_URLCONF = 'settings.urls'
 
@@ -78,6 +92,8 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
 
     'EXCEPTION_HANDLER': 'apps.common.utils.custom_exception_handler',
+
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema', 
 }
 
 CACHES = {
@@ -92,10 +108,17 @@ CACHES = {
 
 REDIS_URL = REDIS_URL
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'en'
+LANGUAGES = [
+    ('en', 'English'), 
+    ('ru', 'Russian'),
+    ('kk', 'Kazakh'),
+]
 TIME_ZONE = 'UTC'
 USE_I18N = True
+USE_I10N = True
 USE_TZ = True
+LOCALE_PATHS = [BASE_DIR/'locale']
 
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
