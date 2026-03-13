@@ -1,129 +1,105 @@
-import logging
-import redis
 import json
-from django.conf import settings
-from rest_framework import viewsets, permissions, status
-from django.core.cache import cache
-from rest_framework.response import Response
-from .models import Post, Comment, Category, Tag
-from .serializers import PostSerializer, CommentSerializer, CategorySerializer, TagSerializer
-from django_redis import get_redis_connection
+import logging
 
-logger = logging.getLogger(__name__)
+import redis as redis_lib
+from django.conf import settings
+from django.core.cache import cache
+from rest_framework import permissions, viewsets
+from rest_framework.response import Response
+
+from .models import Category, Comment, Post, Tag
+from .serializers import (
+    CategorySerializer, CommentSerializer,
+    PostSerializer, TagSerializer,
+)
+
+logger = logging.getLogger('apps.blog')
+
+POSTS_CACHE_KEY = 'published_posts_list'
+POSTS_CACHE_TIMEOUT = 60
+
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
-    def has_object_permission(self, request, view, obj):
+    def has_object_permission(self, request, view, obj) -> bool:
         if request.method in permissions.SAFE_METHODS:
             return True
         return obj.author == request.user
 
+
 class PostViewSet(viewsets.ModelViewSet):
-    queryset = Post.objects.all()
     serializer_class = PostSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
-    lookup_field = "slug"
+    lookup_field = 'slug'
 
     def get_queryset(self):
-        # Только опубликованные посты для неавторизованных
         if self.request.user.is_authenticated:
             return Post.objects.all()
         return Post.objects.filter(status=Post.Status.PUBLISHED)
 
-    def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
-        logger.info('Post created: %s by user %s', serializer.instance.title, self.request.user.email)
-
-    def perform_update(self, serializer):
-        logger.info('Post update attempt: %s by user %s', serializer.instance.title, self.request.user.email)
-        serializer.save()
-        logger.info('Post updated: %s', serializer.instance.title)
-
-    def perform_destroy(self, instance):
-        logger.info('Post deleted: %s by user %s', instance.title, self.request.user.email)
-        instance.delete()
-
     def list(self, request, *args, **kwargs):
-        cache_key = 'published_posts_list'
-        cached_data = cache.get(cache_key)
-        if cached_data is not None:
-            # Если данные есть в кэше, возвращаем их
-            return Response(cached_data)
+        if not request.user.is_authenticated:
+            cached = cache.get(POSTS_CACHE_KEY)
+            if cached is not None:
+                return Response(cached)
 
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            data = self.get_paginated_response(serializer.data).data
-        else:
-            serializer = self.get_serializer(queryset, many=True)
-            data = serializer.data
+        response = super().list(request, *args, **kwargs)
 
-        cache.set(cache_key, data, timeout=60)
-        return Response(data)
-    
-    def perform_create(self, serializer):
+        if not request.user.is_authenticated:
+            cache.set(POSTS_CACHE_KEY, response.data, POSTS_CACHE_TIMEOUT)
+        return response
+
+    def perform_create(self, serializer) -> None:
         serializer.save(author=self.request.user)
-        cache.delete('published_posts_list')
+        cache.delete(POSTS_CACHE_KEY)
         logger.info('Post created: %s by user %s', serializer.instance.title, self.request.user.email)
 
-    def perform_update(self, serializer):
-        logger.info('Post update attempt: %s by user %s', serializer.instance.title, self.request.user.email)
+    def perform_update(self, serializer) -> None:
+        logger.info('Post update attempt: %s by user %s', serializer.instance.slug, self.request.user.email)
         serializer.save()
-        cache.delete('published_posts_list')
+        cache.delete(POSTS_CACHE_KEY)
         logger.info('Post updated: %s', serializer.instance.title)
 
-    def perform_destroy(self, instance):
+    def perform_destroy(self, instance) -> None:
         logger.info('Post deleted: %s by user %s', instance.title, self.request.user.email)
         instance.delete()
-        cache.delete('published_posts_list')
+        cache.delete(POSTS_CACHE_KEY)
+
 
 class CommentViewSet(viewsets.ModelViewSet):
     serializer_class = CommentSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
 
     def get_queryset(self):
-        return Comment.objects.filter(post__slug=self.kwargs["post_slug"])
-    
-    def perform_create(self, serializer):
-        post = Post.objects.get(slug=self.kwargs["post_slug"])
-        serializer.save(author=self.request.user, post=post)
+        # nested router передаёт post_pk (значение lookup поля — slug)
+        return Comment.objects.filter(post__slug=self.kwargs['post_pk'])
+
+    def perform_create(self, serializer) -> None:
+        post = Post.objects.get(slug=self.kwargs['post_pk'])
+        comment = serializer.save(author=self.request.user, post=post)
         logger.info('Comment created on post %s by user %s', post.title, self.request.user.email)
 
-    def perform_update(self, serializer):
-        logger.info('Comment update attempt by user %s', self.request.user.email)
-        serializer.save()
-        logger.info('Comment updated')
+        try:
+            r = redis_lib.from_url(settings.REDIS_URL)
+            event = {
+                'post_slug': post.slug,
+                'author': self.request.user.email,
+                'body': comment.body,
+            }
+            r.publish('comments', json.dumps(event))
+            logger.info('Comment event published to Redis channel')
+        except Exception:
+            logger.exception('Failed to publish comment event to Redis')
 
-    def perform_destroy(self, instance):
+    def perform_destroy(self, instance) -> None:
         logger.info('Comment deleted by user %s', self.request.user.email)
         instance.delete()
 
-    def perform_create(self, serializer):
-        post = Post.objects.get(slug=self.kwargs["post_slug"])
-        comment = serializer.save(author=self.request.user, post=post)
-
-        # Публикация в Redis
-        try:
-            redis_conn = get_redis_connection("default")
-            message = {
-                'id': comment.id,
-                'post_slug': post.slug,
-                'author_email': comment.author.email,
-                'body': comment.body,
-                'created_at': str(comment.created_at)
-            }
-            redis_conn.publish('comments', json.dumps(message))
-            logger.info('Published comment event to Redis channel "comments"')
-        except Exception as e:
-            logger.exception('Failed to publish comment event to Redis: %s', e)
-
-        logger.info('Comment created on post %s by user %s', post.title, self.request.user.email)
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
 
+
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
-
