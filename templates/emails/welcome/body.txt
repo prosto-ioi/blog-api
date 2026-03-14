@@ -1,0 +1,10 @@
+{% load i18n %}
+{% blocktrans with name=user.first_name %}
+Hello, {{ name }}!
+
+Thank you for registering at Blog API.
+We are happy to have you with us.
+
+Best regards,
+Blog API Team
+{% endblocktrans %}

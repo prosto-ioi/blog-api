@@ -15,5 +15,5 @@ REST API для блога с JWT-аутентификацией, кэширов
 
 ERD
 
-![ERD](erd.png)
+![ERD](docs/erd.png)
 
