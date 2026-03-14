@@ -22,7 +22,7 @@ INSTALLED_APPS = [
 
     'rest_framework',
     'rest_framework_simplejwt',
-    'drf_spectacular'
+    'drf_spectacular',
 
     'apps.users',
     'apps.blog',
@@ -65,6 +65,8 @@ TEMPLATES = [
         },
     },
 ]
+
+TEMPLATES[0]['DIRS'] = [BASE_DIR / 'templates']
 
 WSGI_APPLICATION = 'settings.wsgi.application'
 

@@ -1,14 +1,19 @@
 import json
 import logging
-
+import asyncio
+import httpx
 import redis as redis_lib
+
+from django.utils import timezone as django_timezone
 from django.conf import settings
 from django.core.cache import cache
+from rest_framework.decorators import api_view
 from rest_framework import permissions, viewsets
 from rest_framework.response import Response
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
 
+from apps.users.models import User
 from .models import Category, Comment, Post, Tag
 from .serializers import (
     CategorySerializer, CommentSerializer,
@@ -44,31 +49,35 @@ class PostViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         if not request.user.is_authenticated:
-            cached = cache.get(POSTS_CACHE_KEY)
+            cache_key = self._get_cache_key(request)
+            cached = cache.get(cache_key)
             if cached is not None:
                 return Response(cached)
 
         response = super().list(request, *args, **kwargs)
 
         if not request.user.is_authenticated:
-            cache.set(POSTS_CACHE_KEY, response.data, POSTS_CACHE_TIMEOUT)
+            cache.set(self._get_cache_key(request), response.data, POSTS_CACHE_TIMEOUT)
         return response
 
     def perform_create(self, serializer) -> None:
         serializer.save(author=self.request.user)
-        cache.delete(POSTS_CACHE_KEY)
+        for lang in ['en', 'ru', 'kk']:
+            cache.delete(f'published_posts_list_{lang}')
         logger.info('Post created: %s by user %s', serializer.instance.title, self.request.user.email)
 
     def perform_update(self, serializer) -> None:
         logger.info('Post update attempt: %s by user %s', serializer.instance.slug, self.request.user.email)
         serializer.save()
-        cache.delete(POSTS_CACHE_KEY)
+        for lang in ['en', 'ru', 'kk']:
+            cache.delete(f'published_posts_list_{lang}')
         logger.info('Post updated: %s', serializer.instance.title)
 
     def perform_destroy(self, instance) -> None:
         logger.info('Post deleted: %s by user %s', instance.title, self.request.user.email)
         instance.delete()
-        cache.delete(POSTS_CACHE_KEY)
+        for lang in ['en', 'ru', 'kk']:
+            cache.delete(f'published_posts_list_{lang}')
 
 
 class CommentViewSet(viewsets.ModelViewSet):
@@ -76,7 +85,6 @@ class CommentViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly]
 
     def get_queryset(self):
-        # nested router передаёт post_pk (значение lookup поля — slug)
         return Comment.objects.filter(post__slug=self.kwargs['post_pk'])
 
     def perform_create(self, serializer) -> None:
@@ -88,6 +96,7 @@ class CommentViewSet(viewsets.ModelViewSet):
             r = redis_lib.from_url(settings.REDIS_URL)
             event = {
                 'post_slug': post.slug,
+                'author_id': self.request.user.id,
                 'author': self.request.user.email,
                 'body': comment.body,
             }
@@ -109,3 +118,54 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class TagViewSet(viewsets.ModelViewSet):
     queryset = Tag.objects.all()
     serializer_class = TagSerializer
+
+@api_view(['GET'])
+async def stats_view(request):
+    blog_stats = await _get_blog_stats()
+    exchange_rates, current_time = await asyncio.gather(
+        _fetch_exchange_rates(),
+        _fetch_current_time(),
+    )
+    return Response({
+        'blog': blog_stats,
+        'exchange_rates': exchange_rates,
+        'current_time': current_time,
+    })
+
+async def _get_blog_stats() -> dict:
+    total_posts = await Post.objects.acount()
+    total_comments = await Comment.objects.acount()
+    total_users = await User.objects.acount()
+    return {
+        'total_posts': total_posts,
+        'total_comments': total_comments,
+        'total_users': total_users,
+    }
+
+async def _fetch_exchange_rates() -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get('https://open.er-api.com/v6/latest/USD')
+            data = response.json()
+            rates = data.get('rates', {})
+            return {
+                'KZT': rates.get('KZT'),
+                'RUB': rates.get('RUB'),
+                'EUR': rates.get('EUR'),
+            }
+    except Exception:
+        logger.exception('Failed to fetch exchange rates')
+        return {}
+    
+async def _fetch_current_time() -> str:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                'https://timeapi.io/api/time/current/zone?timeZone=Asia/Almaty'
+            )
+            data = response.json()
+            return data.get('dateTime', '')
+    except Exception:
+        logger.exception('Failed to fetch current time')
+        return ''
+    

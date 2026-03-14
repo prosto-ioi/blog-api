@@ -1,7 +1,11 @@
+import pytz
 from django.contrib.auth.password_validation import validate_password
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
-from .models import User
+from .models import User, LANGUAGE_CHOICES
+
+SUPPORTED_LANGUAGES = [code for code, _ in LANGUAGE_CHOICES]
 
 
 class UserRegisterSerializer(serializers.ModelSerializer):
@@ -20,3 +24,19 @@ class UserRegisterSerializer(serializers.ModelSerializer):
     def create(self, validated_data: dict) -> User:
         validated_data.pop('password2')
         return User.objects.create_user(**validated_data)
+    
+class LanguageSerializer(serializers.Serializer):
+    language = serializers.ChoiceField(choices=SUPPORTED_LANGUAGES)
+
+
+class TimezoneSerializer(serializers.Serializer):
+    timezone = serializers.CharField()
+
+    def validate_timezone(self, value: str) -> str:
+        if value not in pytz.all_timezones:
+            raise serializers.ValidationError(
+                _('Invalid timezone. Please use a valid IANA timezone identifier.')
+
+            )
+        return value
+            
